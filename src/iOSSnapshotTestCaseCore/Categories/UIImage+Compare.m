@@ -54,8 +54,15 @@ typedef union {
     CGSize imageSize = CGSizeMake(CGImageGetWidth(image.CGImage), CGImageGetHeight(image.CGImage));
     NSAssert(CGSizeEqualToSize(referenceImageSize, imageSize), @"Images must be same size.");
 
-    // The images have the equal size, so we could use the smallest amount of bytes because of byte padding
-    size_t minBytesPerRow = MIN(CGImageGetBytesPerRow(self.CGImage), CGImageGetBytesPerRow(image.CGImage));
+    // Pixel comparison below assumes a fixed 8-bit-per-component, 4-byte-per-pixel RGBA layout
+    // (see FBComparePixel), so both bitmaps must be rendered into that exact format. Relying on
+    // each image's own color space/bit depth (e.g. one sRGB, one Display P3) can produce mismatched
+    // bytesPerRow/bit-depth combinations that make CGBitmapContextCreate return NULL, and would also
+    // make the raw byte comparison meaningless if the layouts differed.
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    size_t bitsPerComponent = 8;
+    size_t bytesPerPixel = 4;
+    size_t minBytesPerRow = referenceImageSize.width * bytesPerPixel;
     size_t referenceImageSizeBytes = referenceImageSize.height * minBytesPerRow;
     void *referenceImagePixels = calloc(1, referenceImageSizeBytes);
     void *imagePixels = calloc(1, referenceImageSizeBytes);
@@ -63,23 +70,25 @@ typedef union {
     if (!referenceImagePixels || !imagePixels) {
         free(referenceImagePixels);
         free(imagePixels);
+        CGColorSpaceRelease(colorSpace);
         return NO;
     }
 
     CGContextRef referenceImageContext = CGBitmapContextCreate(referenceImagePixels,
                                                                referenceImageSize.width,
                                                                referenceImageSize.height,
-                                                               CGImageGetBitsPerComponent(self.CGImage),
+                                                               bitsPerComponent,
                                                                minBytesPerRow,
-                                                               CGImageGetColorSpace(self.CGImage),
+                                                               colorSpace,
                                                                (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGContextRef imageContext = CGBitmapContextCreate(imagePixels,
                                                       imageSize.width,
                                                       imageSize.height,
-                                                      CGImageGetBitsPerComponent(image.CGImage),
+                                                      bitsPerComponent,
                                                       minBytesPerRow,
-                                                      CGImageGetColorSpace(image.CGImage),
+                                                      colorSpace,
                                                       (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(colorSpace);
 
     if (!referenceImageContext || !imageContext) {
         CGContextRelease(referenceImageContext);
