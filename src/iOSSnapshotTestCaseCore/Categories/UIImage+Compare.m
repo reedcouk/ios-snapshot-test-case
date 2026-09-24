@@ -59,7 +59,17 @@ typedef union {
     // each image's own color space/bit depth (e.g. one sRGB, one Display P3) can produce mismatched
     // bytesPerRow/bit-depth combinations that make CGBitmapContextCreate return NULL, and would also
     // make the raw byte comparison meaningless if the layouts differed.
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    //
+    // We normalise both bitmaps to Display P3 (rather than a plain device/sRGB space) because our
+    // reference PNGs are captured on wide-gamut displays and already carry a Display P3 profile.
+    // Drawing them into a narrower working space and drawing a freshly-rendered sRGB-tagged image
+    // into the same narrow space can each go through a different gamut conversion, which is enough
+    // to make otherwise-identical pixels compare as different. Normalising to P3 (a superset of
+    // sRGB) lets both images convert into the same space without either one needing to be clipped.
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+    if (!colorSpace) {
+        colorSpace = CGColorSpaceCreateDeviceRGB();
+    }
     size_t bitsPerComponent = 8;
     size_t bytesPerPixel = 4;
     size_t minBytesPerRow = referenceImageSize.width * bytesPerPixel;
