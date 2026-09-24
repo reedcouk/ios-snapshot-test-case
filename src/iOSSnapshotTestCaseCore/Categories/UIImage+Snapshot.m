@@ -7,6 +7,8 @@
  *
  */
 
+#import <math.h>
+
 #if SWIFT_PACKAGE
 #import "UIImage+Snapshot.h"
 #import "UIApplication+KeyWindow.h"
@@ -62,15 +64,41 @@
     NSAssert1(CGRectGetWidth(bounds), @"Zero width for view %@", view);
     NSAssert1(CGRectGetHeight(bounds), @"Zero height for view %@", view);
 
-    UIGraphicsImageRenderer *graphicsImageRenderer = [[UIGraphicsImageRenderer alloc] initWithSize:bounds.size];
+    // Render directly into a Display P3 bitmap context so the pixel values themselves are
+    // computed in P3, rather than rendering in (extended) sRGB and re-tagging the color space
+    // afterwards, which would leave the numeric pixel values wrong for the declared space.
+    CGFloat scale = window.screen ? window.screen.scale : [UIScreen mainScreen].scale;
+    size_t pixelWidth = (size_t)ceil(bounds.size.width * scale);
+    size_t pixelHeight = (size_t)ceil(bounds.size.height * scale);
 
-    UIImage *snapshot = [graphicsImageRenderer imageWithActions:^(UIGraphicsImageRendererContext * _Nonnull rendererContext) {
-        [view drawViewHierarchyInRect:bounds afterScreenUpdates:YES];
-    }];
+    CGColorSpaceRef p3ColorSpace = CGColorSpaceCreateWithName(kCGColorSpaceDisplayP3);
+    CGContextRef context = CGBitmapContextCreate(NULL,
+                                                  pixelWidth,
+                                                  pixelHeight,
+                                                  8,
+                                                  0,
+                                                  p3ColorSpace,
+                                                  kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(p3ColorSpace);
+    NSAssert1(context, @"Could not generate Display P3 context for view %@", view);
+
+    // CGBitmapContextCreate uses a bottom-left origin, but UIKit drawing (and the rest of this
+    // file, via UIGraphics*ImageContext) assumes a top-left origin. Flip vertically before
+    // applying the points-to-pixels scale, otherwise the rendered snapshot comes out upside down.
+    CGContextTranslateCTM(context, 0, pixelHeight);
+    CGContextScaleCTM(context, scale, -scale);
+    UIGraphicsPushContext(context);
+    [view drawViewHierarchyInRect:bounds afterScreenUpdates:YES];
+    UIGraphicsPopContext();
 
     if (removeFromSuperview) {
         [view removeFromSuperview];
     }
+
+    CGImageRef p3CGImage = CGBitmapContextCreateImage(context);
+    CGContextRelease(context);
+    UIImage *snapshot = [UIImage imageWithCGImage:p3CGImage scale:scale orientation:UIImageOrientationUp];
+    CGImageRelease(p3CGImage);
 
     return snapshot;
 }
